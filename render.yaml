@@ -1,0 +1,45 @@
+services:
+  # Backend API
+  - type: web
+    name: resume-matcher-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: "cd backend && python main.py"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GROQ_API_KEY
+        sync: false
+      - key: SERPAPI_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: resume-db
+          property: connectionString
+      - key: CORS_ORIGINS
+        value: ""
+      - key: DEBUG
+        value: "false"
+    autoDeploy: true
+
+  # Frontend (built and served as static site)
+  - type: web
+    name: resume-matcher-frontend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: "npm install && npm run build"
+    startCommand: "npx serve -s dist -l $PORT"
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    autoDeploy: true
+
+databases:
+  - name: resume-db
+    databaseName: resume_matcher
+    plan: free

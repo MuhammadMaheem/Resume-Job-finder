@@ -1,0 +1,32 @@
+# Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build for production
+RUN npm run build
+
+# Production stage
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install serve for static hosting
+RUN npm install -g serve
+
+# Copy built files from builder
+COPY --from=builder /app/dist ./dist
+
+# Add environment variable injection for API URL
+COPY nginx.conf ./nginx.conf 2>/dev/null || true
+
+EXPOSE 3000
+
+CMD ["serve", "-s", "dist", "-l", "3000"]
