@@ -15,23 +15,6 @@ from urllib.parse import urlparse, parse_qs
 # Setup path
 sys.path.insert(0, os.path.dirname(__file__))
 
-def handler(req, res):
-    """Vercel serverless handler — defined at top level for Vercel detection."""
-    # Lazy imports (avoid DB connection during build)
-    from services.resume_parser import ResumeParser
-    from services.groq_ai import GroqAI
-    from services.job_search import JobSearch
-    from database import get_db, init_db
-    from models import User, Resume, Job, CoverLetter, JobStatus, InterviewQuestion, NetworkingSuggestion
-    from sqlalchemy import text
-    from collections import Counter
-
-    # Init services & DB
-    resume_parser = ResumeParser()
-    groq_ai = GroqAI()
-    job_search = JobSearch()
-    init_db()
-
 def read_body(req):
     """Read request body from Vercel request object."""
     body = req.get('body', '')
