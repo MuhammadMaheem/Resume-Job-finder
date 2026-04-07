@@ -6,6 +6,7 @@ import os
 import json
 import shutil
 import logging
+import tempfile
 from datetime import datetime, timedelta
 from collections import Counter
 
@@ -28,8 +29,9 @@ resume_parser = ResumeParser()
 groq_ai = GroqAI()
 job_search = JobSearch()
 
-# Create uploads directory
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+# Serverless filesystems (e.g. Vercel) are read-only under the deployment bundle.
+# Use the system temp directory for any temporary file operations.
+UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "resume_chatbot_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -86,18 +88,17 @@ async def upload_resume(user_id: int, file: UploadFile = File(...), db: Session 
     # Sanitize filename
     import uuid
     safe_filename = f"{user_id}_{uuid.uuid4().hex}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, safe_filename)
-
-    with open(file_path, "wb") as buffer:
-        buffer.write(content)
-
-    raw_text = resume_parser.extract_text(file_path)
+    # Parse PDF directly from bytes to avoid write failures on read-only filesystems.
+    raw_text = resume_parser.extract_text_from_bytes(content)
     if not raw_text:
         raise HTTPException(status_code=400, detail="Could not extract text from PDF. The file may be image-based or corrupted.")
 
     analysis = groq_ai.analyze_resume(raw_text)
     if not analysis:
         raise HTTPException(status_code=500, detail="Failed to analyze resume with AI. Please try again.")
+
+    # Keep a logical reference path for compatibility with existing DB schema.
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
 
     db_resume = Resume(user_id=user_id, filename=file.filename, file_path=file_path, raw_text=raw_text, analysis=analysis)
     db.add(db_resume)

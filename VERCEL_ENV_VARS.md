@@ -5,30 +5,39 @@
 ### Step-by-Step (Copy-Paste)
 
 #### 1. GROQ_API_KEY
+
 **Where to get**: https://console.groq.com
+
 ```
 sk-proj-xxxxx... (your actual API key)
 ```
 
-#### 2. SERPAPI_KEY  
+#### 2. SERPAPI_KEY
+
 **Where to get**: https://serpapi.com/manage/api_key
+
 ```
 xxxxx... (your actual API key)
 ```
 
 #### 3. DATABASE_URL
+
 **Where to get**: https://neon.tech → Click project → Connection strings
+
 ```
 postgresql://user:password@ep-XXX.region.aws.neon.tech/resume_db?sslmode=require
 ```
+
 ⚠️ **CRITICAL**: Must include `?sslmode=require` at the end
 
 #### 4. DEBUG
+
 ```
 false
 ```
 
-#### 5. PYTHON_RUNTIME  
+#### 5. PYTHON_RUNTIME
+
 ```
 python3.11
 ```
@@ -50,6 +59,7 @@ python3.11
 ## ✅ Verify Variables Are Set
 
 After deployment:
+
 ```bash
 # Test health endpoint (no env vars needed)
 curl https://your-project.vercel.app/api/health
