@@ -1,5 +1,5 @@
 from groq import Groq
-from config import get_settings
+from backend.config import get_settings
 import json
 from typing import Optional
 

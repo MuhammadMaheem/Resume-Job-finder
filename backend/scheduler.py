@@ -2,10 +2,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import Job, Resume, JobStatus
-from services.groq_ai import GroqAI
-from services.job_search import JobSearch
-from config import get_settings
+from backend.models import Job, Resume, JobStatus
+from backend.services.groq_ai import GroqAI
+from backend.services.job_search import JobSearch
+from backend.config import get_settings
 from datetime import datetime
 
 settings = get_settings()

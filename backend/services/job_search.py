@@ -1,5 +1,5 @@
 import httpx
-from config import get_settings
+from backend.config import get_settings
 from typing import Optional
 from datetime import datetime, timedelta
 import random

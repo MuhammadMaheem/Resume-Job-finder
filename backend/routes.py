@@ -12,15 +12,15 @@ from collections import Counter
 
 logger = logging.getLogger('jobmatcher')
 
-from database import get_db
-from models import (
+from backend.database import get_db
+from backend.models import (
     User, Resume, Job, CoverLetter, JobStatus, SearchHistory,
     InterviewQuestion, NetworkingSuggestion
 )
-from schemas import *
-from services.resume_parser import ResumeParser
-from services.groq_ai import GroqAI
-from services.job_search import JobSearch
+from backend.schemas import *
+from backend.services.resume_parser import ResumeParser
+from backend.services.groq_ai import GroqAI
+from backend.services.job_search import JobSearch
 
 router = APIRouter()
 

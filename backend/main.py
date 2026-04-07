@@ -2,9 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from database import engine, Base, get_db
-from routes import router
-from config import get_settings
+from backend.database import engine, Base, get_db
+from backend.routes import router
+from backend.config import get_settings
 import logging
 from contextlib import asynccontextmanager
 
