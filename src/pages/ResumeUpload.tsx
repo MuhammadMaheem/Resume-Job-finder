@@ -39,7 +39,7 @@ export default function ResumeUpload({ userId }: ResumeUploadProps) {
     setUploading(true); setError('');
     const formData = new FormData(); formData.append('file', selectedFile);
     try {
-      const { data } = await axios.post(`/api/resumes/${userId}/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const { data } = await axios.post(`/api/resumes/${userId}/upload`, formData);
       setResumeId(data.id); setAnalysis(data.analysis);
     } catch (err: any) { setError(err.response?.data?.detail || 'Upload failed'); }
     finally { setUploading(false); }
