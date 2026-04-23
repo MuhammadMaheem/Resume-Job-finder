@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional as Opt
@@ -7,10 +7,17 @@ import json
 import shutil
 import logging
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+def utcnow():
+    """Timezone-aware UTC datetime."""
+    return datetime.now(timezone.utc)
 
 logger = logging.getLogger('jobmatcher')
+limiter = Limiter(key_func=get_remote_address)
 
 from backend.database import get_db
 from backend.models import (
@@ -71,10 +78,16 @@ def update_notifications(user_id: int, settings: NotificationSettings, db: Sessi
 # ========== RESUME ENDPOINTS ==========
 
 @router.post("/resumes/{user_id}/upload", response_model=ResumeResponse)
-async def upload_resume(user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def upload_resume(request: Request, user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        # Handle stale client-side user IDs by creating a lightweight placeholder user.
+        user = User(id=user_id, name=f"User {user_id}")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        logger.warning("Auto-created missing user %s during resume upload", user_id)
 
     # Validate file type
     if not file.filename or not file.filename.lower().endswith('.pdf'):
@@ -93,7 +106,7 @@ async def upload_resume(user_id: int, file: UploadFile = File(...), db: Session 
     if not raw_text:
         raise HTTPException(status_code=400, detail="Could not extract text from PDF. The file may be image-based or corrupted.")
 
-    analysis = groq_ai.analyze_resume(raw_text)
+    analysis = await groq_ai.analyze_resume(raw_text)
     if not analysis:
         raise HTTPException(status_code=500, detail="Failed to analyze resume with AI. Please try again.")
 
@@ -108,7 +121,7 @@ async def upload_resume(user_id: int, file: UploadFile = File(...), db: Session 
 
 
 @router.put("/resumes/{resume_id}/profile", response_model=ResumeResponse)
-def update_resume_profile(resume_id: int, manual_profile: ManualProfile, db: Session = Depends(get_db)):
+async def update_resume_profile(resume_id: int, manual_profile: ManualProfile, db: Session = Depends(get_db)):
     resume = db.query(Resume).filter(Resume.id == resume_id).first()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -139,7 +152,7 @@ def update_resume_profile(resume_id: int, manual_profile: ManualProfile, db: Ses
 
     if extra_parts:
         combined = raw + "\n\n--- ADDITIONAL USER INFORMATION ---\n" + "\n".join(extra_parts)
-        analysis = groq_ai.analyze_resume(combined)
+        analysis = await groq_ai.analyze_resume(combined)
         if analysis:
             resume.analysis = analysis
 
@@ -159,6 +172,16 @@ def get_resume(resume_id: int, db: Session = Depends(get_db)):
 @router.get("/users/{user_id}/resumes", response_model=List[ResumeResponse])
 def get_user_resumes(user_id: int, db: Session = Depends(get_db)):
     return db.query(Resume).filter(Resume.user_id == user_id).all()
+
+
+@router.get("/resumes/{resume_id}/download")
+def download_resume(resume_id: int, db: Session = Depends(get_db)):
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    if not os.path.exists(resume.file_path):
+        raise HTTPException(status_code=404, detail="Resume file not found")
+    return FileResponse(resume.file_path, media_type="application/pdf", filename=resume.filename)
 
 
 @router.delete("/resumes/{resume_id}")
@@ -205,48 +228,84 @@ def compare_resumes(user_id: int, db: Session = Depends(get_db)):
 # ========== JOB ENDPOINTS ==========
 
 @router.post("/jobs/scan", response_model=List[JobResponse])
-async def scan_for_jobs(request: JobScanRequest, db: Session = Depends(get_db)):
-    resume = db.query(Resume).filter(Resume.id == request.resume_id).first()
+@limiter.limit("10/minute")
+async def scan_for_jobs(request: Request, request_data: JobScanRequest, db: Session = Depends(get_db)):
+    resume = db.query(Resume).filter(Resume.id == request_data.resume_id).first()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
     if not resume.analysis:
         raise HTTPException(status_code=400, detail="Resume has not been analyzed yet")
 
-    queries = groq_ai.search_jobs_query(resume.analysis, request.location)
-    raw_jobs = await job_search.search_multiple_queries(queries, request.location)
+    # Build location string based on parameters
+    search_location = request_data.location
+    if request_data.worldwide:
+        search_location = "Worldwide"
+    elif request_data.city and request_data.country:
+        search_location = f"{request_data.city}, {request_data.country}"
+    elif request_data.city:
+        search_location = request_data.city
+    elif request_data.country:
+        search_location = request_data.country
+
+    queries = await groq_ai.search_jobs_query(resume.analysis, search_location)
+    raw_jobs = await job_search.search_multiple_queries(
+        queries,
+        location=search_location,
+        hours_since_posted=request_data.hours_since_posted or 24,
+        location_type=request_data.location_type or "any",
+        country=request_data.country,
+        city=request_data.city,
+        worldwide=request_data.worldwide or False
+    )
 
     matched_jobs = []
-    for raw_job in raw_jobs[:request.max_results]:
-        match_data = groq_ai.match_job_to_resume(raw_job.get("description", ""), resume.analysis)
-        if match_data:
-            # Calculate ease of apply based on application URL quality and source
-            ease = 50.0
-            url = raw_job.get("application_url", "")
-            if "linkedin.com" in url or "indeed.com" in url:
-                ease = 80.0
-            elif url and len(url) > 10:
-                ease = 65.0
+    for raw_job in raw_jobs[:request_data.max_results]:
+        match_data = await groq_ai.match_job_to_resume(raw_job.get("description", ""), resume.analysis)
+        
+        # If AI matching fails, create a basic match score based on keyword matching
+        if not match_data:
+            # Fallback: simple keyword-based matching
+            resume_skills = set(resume.analysis.get("skills", []))
+            job_desc = raw_job.get("description", "").lower()
+            matched_skills = sum(1 for skill in resume_skills if skill.lower() in job_desc)
+            match_score = min(100, int((matched_skills / max(len(resume_skills), 1)) * 100))
+            
+            match_data = {
+                "match_score": match_score,
+                "match_reasons": [f"Matches {matched_skills} of your skills"],
+                "missing_skills": [],
+                "strong_points": ["Basic keyword match"],
+                "recommendation": "consider"
+            }
+        
+        # Calculate ease of apply based on application URL quality and source
+        ease = 50.0
+        url = raw_job.get("application_url", "")
+        if "linkedin.com" in url or "indeed.com" in url:
+            ease = 80.0
+        elif url and len(url) > 10:
+            ease = 65.0
 
-            db_job = Job(
-                user_id=resume.user_id, resume_id=request.resume_id,
-                title=raw_job.get("title", ""), company=raw_job.get("company", ""),
-                location=raw_job.get("location", ""), job_type=raw_job.get("job_type", ""),
-                description=raw_job.get("description", ""),
-                requirements=raw_job.get("requirements", []),
-                match_score=match_data.get("match_score", 0),
-                match_reasons=match_data.get("match_reasons", []),
-                missing_skills=match_data.get("missing_skills", []),
-                application_url=raw_job.get("application_url", ""),
-                source=raw_job.get("source", ""), status=JobStatus.NEW,
-                ease_of_apply=ease,
-            )
-            db.add(db_job)
-            matched_jobs.append(db_job)
+        db_job = Job(
+            user_id=resume.user_id, resume_id=request_data.resume_id,
+            title=raw_job.get("title", ""), company=raw_job.get("company", ""),
+            location=raw_job.get("location", ""), job_type=raw_job.get("job_type", ""),
+            description=raw_job.get("description", ""),
+            requirements=raw_job.get("requirements", []),
+            match_score=match_data.get("match_score", 0),
+            match_reasons=match_data.get("match_reasons", []),
+            missing_skills=match_data.get("missing_skills", []),
+            application_url=raw_job.get("application_url", ""),
+            source=raw_job.get("source", ""), status=JobStatus.NEW,
+            ease_of_apply=ease,
+        )
+        db.add(db_job)
+        matched_jobs.append(db_job)
 
     # Save search history
     search = SearchHistory(
-        user_id=resume.user_id, resume_id=request.resume_id,
-        location=request.location, queries_used=queries,
+        user_id=resume.user_id, resume_id=request_data.resume_id,
+        location=search_location, queries_used=queries,
         results_count=len(matched_jobs),
     )
     db.add(search)
@@ -298,7 +357,7 @@ def update_job_status(job_id: int, status_update: JobStatusUpdate, db: Session =
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid status: {status_update.status}")
     if status_update.status == "applied":
-        job.applied_at = datetime.utcnow()
+        job.applied_at = utcnow()
     db.commit()
     db.refresh(job)
     return job
@@ -316,7 +375,7 @@ def bulk_update_status(update: BulkStatusUpdate, db: Session = Depends(get_db)):
         try:
             job.status = JobStatus(update.status)
             if update.status == "applied":
-                job.applied_at = datetime.utcnow()
+                job.applied_at = utcnow()
             job.selected_for_bulk = False
         except ValueError:
             pass
@@ -337,7 +396,7 @@ def toggle_bulk_select(job_id: int, db: Session = Depends(get_db)):
 
 # FEATURE 10: INTERVIEW PREP
 @router.post("/interview-questions/generate", response_model=List[InterviewQuestionResponse])
-def generate_interview_questions(request: InterviewQuestionGenerate, db: Session = Depends(get_db)):
+async def generate_interview_questions(request: InterviewQuestionGenerate, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == request.job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -345,7 +404,7 @@ def generate_interview_questions(request: InterviewQuestionGenerate, db: Session
     resume = db.query(Resume).filter(Resume.id == job.resume_id).first() if job.resume_id else None
     resume_text = f"\nCandidate Profile:\n{json.dumps(resume.analysis, indent=2)}" if resume and resume.analysis else ""
 
-    questions = groq_ai.generate_interview_questions(job.description or "", job.title, job.company, resume_text)
+    questions = await groq_ai.generate_interview_questions(job.description or "", job.title, job.company, resume_text)
 
     db_questions = []
     for q in questions:
@@ -370,12 +429,12 @@ def get_interview_questions(job_id: int, db: Session = Depends(get_db)):
 
 # FEATURE 15: NETWORKING SUGGESTIONS
 @router.post("/networking/generate", response_model=List[NetworkingSuggestionResponse])
-def generate_networking(request: NetworkingGenerate, db: Session = Depends(get_db)):
+async def generate_networking(request: NetworkingGenerate, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == request.job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    suggestions = groq_ai.generate_networking_suggestions(job.company, job.title, job.description or "")
+    suggestions = await groq_ai.generate_networking_suggestions(job.company, job.title, job.description or "")
 
     db_suggestions = []
     for s in suggestions:
@@ -401,7 +460,7 @@ def get_networking(job_id: int, db: Session = Depends(get_db)):
 
 # FEATURE 14: RESUME REWRITER
 @router.post("/resumes/rewrite", response_model=ResumeRewriterResponse)
-def rewrite_resume(request: ResumeRewriterRequest, db: Session = Depends(get_db)):
+async def rewrite_resume(request: ResumeRewriterRequest, db: Session = Depends(get_db)):
     resume = db.query(Resume).filter(Resume.id == request.resume_id).first()
     job = db.query(Job).filter(Job.id == request.job_id).first()
     if not resume:
@@ -409,7 +468,7 @@ def rewrite_resume(request: ResumeRewriterRequest, db: Session = Depends(get_db)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    result = groq_ai.rewrite_resume_for_job(resume.raw_text or "", job.description or "", job.title, job.company)
+    result = await groq_ai.rewrite_resume_for_job(resume.raw_text or "", job.description or "", job.title, job.company)
 
     return ResumeRewriterResponse(
         original_resume_id=resume.id,
@@ -435,12 +494,13 @@ def get_analytics(user_id: int, db: Session = Depends(get_db)):
     status_counts = Counter(j.status.value if j.status else "new" for j in jobs)
 
     # Applications over time (last 30 days, grouped by week)
-    now = datetime.utcnow()
+    now = utcnow()
     applications_over_time = []
     for i in range(3, -1, -1):
         end_date = now - timedelta(days=i * 7)
         start_date = end_date - timedelta(days=7)
-        count = sum(1 for j in jobs if j.created_at and start_date <= j.created_at <= end_date)
+        # Handle both timezone-aware and naive datetimes for backward compatibility
+        count = sum(1 for j in jobs if j.created_at and start_date <= (j.created_at.replace(tzinfo=timezone.utc) if j.created_at.tzinfo is None else j.created_at) <= end_date)
         applications_over_time.append({"week": f"Week {4 - i}", "start": start_date.strftime("%Y-%m-%d"), "count": count})
 
     # Top companies
@@ -475,8 +535,9 @@ def get_analytics(user_id: int, db: Session = Depends(get_db)):
 # ========== COVER LETTER ENDPOINTS ==========
 
 @router.post("/cover-letters/generate", response_model=CoverLetterResponse)
-def generate_cover_letter(request: CoverLetterGenerate, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == request.job_id).first()
+@limiter.limit("5/minute")
+async def generate_cover_letter(request: Request, req: CoverLetterGenerate, db: Session = Depends(get_db)):
+    job = db.query(Job).filter(Job.id == req.job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -484,7 +545,7 @@ def generate_cover_letter(request: CoverLetterGenerate, db: Session = Depends(ge
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    content = groq_ai.generate_cover_letter(job.description or "", resume.analysis or {}, job.company, job.title)
+    content = await groq_ai.generate_cover_letter(job.description or "", resume.analysis or {}, job.company, job.title)
     if not content:
         raise HTTPException(status_code=500, detail="Failed to generate cover letter")
 
@@ -503,7 +564,7 @@ def get_cover_letters(job_id: int, db: Session = Depends(get_db)):
 # ========== RESUME IMPROVEMENT ENDPOINTS ==========
 
 @router.post("/resumes/{resume_id}/improvements", response_model=ResumeImprovementResponse)
-def get_resume_improvements(resume_id: int, target_titles: Opt[str] = Query(default=None), db: Session = Depends(get_db)):
+async def get_resume_improvements(resume_id: int, target_titles: Opt[str] = Query(default=None), db: Session = Depends(get_db)):
     resume = db.query(Resume).filter(Resume.id == resume_id).first()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -518,7 +579,7 @@ def get_resume_improvements(resume_id: int, target_titles: Opt[str] = Query(defa
     else:
         target_jobs = ["Software Engineer", "Full Stack Developer"]
 
-    improvements = groq_ai.suggest_resume_improvements(resume.analysis, target_jobs)
+    improvements = await groq_ai.suggest_resume_improvements(resume.analysis, target_jobs)
     if not improvements:
         raise HTTPException(status_code=500, detail="Failed to generate improvements")
 
@@ -562,7 +623,7 @@ def export_resume_pdf(resume_id: int, db: Session = Depends(get_db)):
     pdf.cell(0, 15, "Resume Analysis Report", 0, 1, "C")
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 8, f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} | File: {resume.filename}", 0, 1, "C")
+    pdf.cell(0, 8, f"Generated: {utcnow().strftime('%Y-%m-%d %H:%M')} | File: {resume.filename}", 0, 1, "C")
     pdf.ln(5)
 
     a = resume.analysis

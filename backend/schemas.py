@@ -116,13 +116,25 @@ class JobStatusUpdate(BaseModel):
 class JobScanRequest(BaseModel):
     resume_id: int
     location: Optional[str] = "Remote"
+    location_type: Optional[str] = "any"  # remote, onsite, hybrid, any
+    country: Optional[str] = None
+    city: Optional[str] = None
+    worldwide: Optional[bool] = False
+    hours_since_posted: Optional[int] = 24  # Default: last 24 hours
     max_results: Optional[int] = 20
 
     @field_validator('max_results')
     @classmethod
     def validate_max_results(cls, v):
-        if v is not None and (v < 1 or v > 50):
-            raise ValueError('max_results must be between 1 and 50')
+        if v is not None and (v < 1 or v > 100):
+            raise ValueError('max_results must be between 1 and 100')
+        return v
+
+    @field_validator('hours_since_posted')
+    @classmethod
+    def validate_hours_posted(cls, v):
+        if v is not None and (v < 1 or v > 168):  # Max 7 days
+            raise ValueError('hours_since_posted must be between 1 and 168')
         return v
 
 

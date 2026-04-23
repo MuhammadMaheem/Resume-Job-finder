@@ -156,10 +156,51 @@ export default function App() {
 
   useEffect(() => {
     const stored = localStorage.getItem('userId');
-    if (stored) { setUserId(parseInt(stored)); setUserReady(true); }
-    else {
-      fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'User' }) })
-        .then(res => res.json()).then(data => { setUserId(data.id); localStorage.setItem('userId', data.id); setUserReady(true); })
+    if (stored) {
+      const storedId = parseInt(stored);
+      // Validate that the stored user actually exists in the database
+      fetch(`/api/users/${storedId}`)
+        .then(res => {
+          if (res.ok) {
+            // User exists, use it
+            setUserId(storedId);
+            setUserReady(true);
+          } else {
+            // User doesn't exist (404), create a new one
+            console.warn(`Stored user ${storedId} not found, creating new user...`);
+            localStorage.removeItem('userId');
+            return fetch('/api/users', { 
+              method: 'POST', 
+              headers: { 'Content-Type': 'application/json' }, 
+              body: JSON.stringify({ name: 'User' }) 
+            });
+          }
+        })
+        .then(res => res?.json())
+        .then(data => {
+          if (data?.id) {
+            setUserId(data.id);
+            localStorage.setItem('userId', data.id);
+          }
+          setUserReady(true);
+        })
+        .catch((err) => {
+          console.error('Failed to initialize user:', err);
+          setUserReady(true);
+        });
+    } else {
+      // No stored user, create a new one
+      fetch('/api/users', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ name: 'User' }) 
+      })
+        .then(res => res.json())
+        .then(data => { 
+          setUserId(data.id); 
+          localStorage.setItem('userId', data.id); 
+          setUserReady(true); 
+        })
         .catch(() => setUserReady(true));
     }
   }, []);

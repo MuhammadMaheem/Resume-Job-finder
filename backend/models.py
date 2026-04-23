@@ -1,8 +1,13 @@
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, JSON, Enum as SQLEnum, Boolean
 from sqlalchemy.orm import relationship
 from backend.database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
+
+
+def utcnow():
+    """Timezone-aware UTC datetime."""
+    return datetime.now(timezone.utc)
 
 
 class JobStatus(enum.Enum):
@@ -22,8 +27,8 @@ class User(Base):
     email = Column(String(255), nullable=True, index=True, unique=True)
     notification_email = Column(String(255), nullable=True)
     notification_enabled = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="user", cascade="all, delete-orphan")
@@ -40,8 +45,8 @@ class Resume(Base):
     raw_text = Column(Text, nullable=True)
     analysis = Column(JSON, nullable=True)
     manual_profile = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     user = relationship("User", back_populates="resumes")
 
@@ -55,7 +60,7 @@ class SearchHistory(Base):
     location = Column(String(255), default="Remote")
     queries_used = Column(JSON, nullable=True)
     results_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     user = relationship("User", back_populates="search_history")
 
@@ -85,7 +90,7 @@ class Job(Base):
     status = Column(SQLEnum(JobStatus), default=JobStatus.NEW, index=True)
     ease_of_apply = Column(Float, nullable=True)
     posted_date = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
     applied_at = Column(DateTime, nullable=True)
     selected_for_bulk = Column(Boolean, default=False, index=True)
 
@@ -101,7 +106,7 @@ class CoverLetter(Base):
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     job = relationship("Job", back_populates="cover_letters")
 
@@ -114,7 +119,7 @@ class InterviewQuestion(Base):
     category = Column(String(100), nullable=True, index=True)
     question = Column(Text, nullable=False)
     suggested_answer = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     job = relationship("Job", back_populates="interview_questions")
 
@@ -128,6 +133,6 @@ class NetworkingSuggestion(Base):
     role = Column(String(255), nullable=True)
     linkedin_url = Column(String(500), nullable=True)
     suggestion = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     job = relationship("Job", back_populates="networking_suggestions")

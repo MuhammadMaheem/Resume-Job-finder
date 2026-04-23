@@ -1,9 +1,12 @@
 from groq import Groq
 from backend.config import get_settings
 import json
+import asyncio
+import logging
 from typing import Optional
 
 settings = get_settings()
+logger = logging.getLogger("jobmatcher")
 
 
 class GroqAI:
@@ -13,7 +16,7 @@ class GroqAI:
         self.client = Groq(api_key=settings.GROQ_API_KEY)
         self.model = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-    def analyze_resume(self, resume_text: str) -> Optional[dict]:
+    async def analyze_resume(self, resume_text: str) -> Optional[dict]:
         """Analyze resume text and extract structured information."""
         prompt = f"""
 You are an expert resume analyzer. Analyze the following resume and extract structured information in JSON format.
@@ -35,11 +38,13 @@ Resume text:
 Respond ONLY with valid JSON. No extra text.
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.1,
                 max_tokens=4096,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             # Extract JSON from response
@@ -49,10 +54,10 @@ Respond ONLY with valid JSON. No extra text.
                 return json.loads(content[start:end])
             return None
         except Exception as e:
-            print(f"Error analyzing resume: {e}")
+            logger.error("Error analyzing resume: %s", e)
             return None
 
-    def search_jobs_query(self, resume_analysis: dict, location: str = "Remote") -> str:
+    async def search_jobs_query(self, resume_analysis: dict, location: str = "Remote") -> list:
         """Generate optimized job search queries based on resume analysis."""
         skills = resume_analysis.get("skills", [])
         seniority = resume_analysis.get("seniority_level", "")
@@ -74,11 +79,13 @@ Return a JSON array with 3 search query objects:
 Respond ONLY with valid JSON.
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.3,
                 max_tokens=1024,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             start = content.find("[")
@@ -88,10 +95,10 @@ Respond ONLY with valid JSON.
                 return queries
             return [{"query": f"{seniority} {' '.join(skills[:5])} jobs {location}", "focus": "general"}]
         except Exception as e:
-            print(f"Error generating search queries: {e}")
+            logger.error("Error generating search queries: %s", e)
             return [{"query": f"{' '.join(skills[:5])} jobs", "focus": "general"}]
 
-    def match_job_to_resume(self, job_description: str, resume_analysis: dict) -> Optional[dict]:
+    async def match_job_to_resume(self, job_description: str, resume_analysis: dict) -> Optional[dict]:
         """Calculate how well a job matches with a resume."""
         prompt = f"""
 You are an expert job matcher. Analyze how well this job description matches the candidate's resume.
@@ -115,11 +122,13 @@ Provide a JSON response with:
 Respond ONLY with valid JSON.
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.1,
                 max_tokens=2048,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             start = content.find("{")
@@ -128,10 +137,10 @@ Respond ONLY with valid JSON.
                 return json.loads(content[start:end])
             return None
         except Exception as e:
-            print(f"Error matching job: {e}")
+            logger.error("Error matching job: %s", e)
             return None
 
-    def generate_cover_letter(self, job_description: str, resume_analysis: dict, company: str, title: str) -> Optional[str]:
+    async def generate_cover_letter(self, job_description: str, resume_analysis: dict, company: str, title: str) -> Optional[str]:
         """Generate a customized cover letter."""
         prompt = f"""
 Write a professional, compelling cover letter for the following position.
@@ -158,7 +167,8 @@ Make it personalized, specific, and avoid generic phrases. Keep it to 3-4 paragr
 Return ONLY the cover letter text, no additional formatting.
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.7,
@@ -166,10 +176,10 @@ Return ONLY the cover letter text, no additional formatting.
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            print(f"Error generating cover letter: {e}")
+            logger.error("Error generating cover letter: %s", e)
             return None
 
-    def suggest_resume_improvements(self, resume_analysis: dict, target_jobs: list) -> Optional[dict]:
+    async def suggest_resume_improvements(self, resume_analysis: dict, target_jobs: list) -> Optional[dict]:
         """Suggest improvements to the resume based on target jobs."""
         prompt = f"""
 Analyze the candidate's resume and suggest improvements to better match these target jobs.
@@ -192,11 +202,13 @@ Provide a JSON response with:
 Respond ONLY with valid JSON.
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.2,
                 max_tokens=2048,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             start = content.find("{")
@@ -205,10 +217,10 @@ Respond ONLY with valid JSON.
                 return json.loads(content[start:end])
             return None
         except Exception as e:
-            print(f"Error suggesting improvements: {e}")
+            logger.error("Error suggesting improvements: %s", e)
             return None
 
-    def generate_interview_questions(self, job_description: str, title: str, company: str, candidate_profile: str) -> list[dict]:
+    async def generate_interview_questions(self, job_description: str, title: str, company: str, candidate_profile: str) -> list:
         """Generate interview questions based on job description and candidate profile."""
         prompt = f"""
 Generate interview questions for the following position and candidate.
@@ -234,11 +246,13 @@ Respond ONLY with valid JSON in this format:
 ]
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.5,
                 max_tokens=4096,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             start = content.find("[")
@@ -247,10 +261,10 @@ Respond ONLY with valid JSON in this format:
                 return json.loads(content[start:end])
             return []
         except Exception as e:
-            print(f"Error generating questions: {e}")
+            logger.error("Error generating questions: %s", e)
             return []
 
-    def generate_networking_suggestions(self, company: str, title: str, description: str) -> list[dict]:
+    async def generate_networking_suggestions(self, company: str, title: str, description: str) -> list:
         """Generate networking suggestions for people to connect with at the target company."""
         prompt = f"""
 Suggest networking contacts for a job application.
@@ -279,11 +293,13 @@ Respond ONLY with valid JSON:
 ]
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.3,
                 max_tokens=2048,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             start = content.find("[")
@@ -292,10 +308,10 @@ Respond ONLY with valid JSON:
                 return json.loads(content[start:end])
             return []
         except Exception as e:
-            print(f"Error generating networking: {e}")
+            logger.error("Error generating networking: %s", e)
             return []
 
-    def rewrite_resume_for_job(self, resume_text: str, job_description: str, title: str, company: str) -> dict:
+    async def rewrite_resume_for_job(self, resume_text: str, job_description: str, title: str, company: str) -> dict:
         """Rewrite a resume tailored to a specific job."""
         prompt = f"""
 Rewrite this resume to be perfectly tailored for the following job.
@@ -322,11 +338,13 @@ Respond with JSON:
 }}
 """
         try:
-            response = self.client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.3,
                 max_tokens=4096,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
             start = content.find("{")
@@ -335,5 +353,5 @@ Respond with JSON:
                 return json.loads(content[start:end])
             return {"summary": "", "tailored_text": ""}
         except Exception as e:
-            print(f"Error rewriting resume: {e}")
+            logger.error("Error rewriting resume: %s", e)
             return {"summary": "", "tailored_text": ""}

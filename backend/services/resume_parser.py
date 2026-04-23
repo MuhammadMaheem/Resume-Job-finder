@@ -1,5 +1,10 @@
-import pdfplumber
+import io
+import logging
 from typing import Optional
+
+import pdfplumber
+
+logger = logging.getLogger("jobmatcher")
 
 
 class ResumeParser:
@@ -17,14 +22,13 @@ class ResumeParser:
                         text += page_text + "\n"
             return text.strip() if text else None
         except Exception as e:
-            print(f"Error extracting text from PDF: {e}")
+            logger.warning("Error extracting text from PDF: %s", e)
             return None
 
     @staticmethod
     def extract_text_from_bytes(file_bytes: bytes) -> Optional[str]:
         """Extract text from PDF bytes."""
         try:
-            import io
             text = ""
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                 for page in pdf.pages:
@@ -33,5 +37,5 @@ class ResumeParser:
                         text += page_text + "\n"
             return text.strip() if text else None
         except Exception as e:
-            print(f"Error extracting text from PDF bytes: {e}")
+            logger.warning("Error extracting text from PDF bytes: %s", e)
             return None

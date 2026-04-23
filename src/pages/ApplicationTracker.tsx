@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-interface Job { id: number; title: string; company: string; location: string; match_score: number; application_url: string; status: string; }
+interface Job { id: number; title: string; company: string; location: string; match_score: number; application_url: string; status: string; created_at: string; }
 
 export default function ApplicationTracker({ userId }: { userId: number | null }) {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -19,12 +19,50 @@ export default function ApplicationTracker({ userId }: { userId: number | null }
     setJobs(jobs.map(j => j.id === jobId ? { ...j, status } : j));
   };
 
+  const exportToCSV = () => {
+    const headers = ['Title', 'Company', 'Location', 'Match Score', 'Status', 'Applied Date', 'Application URL'];
+    const rows = jobs.map(job => [
+      job.title,
+      job.company,
+      job.location,
+      job.match_score,
+      job.status,
+      job.created_at ? new Date(job.created_at).toLocaleDateString() : 'N/A',
+      job.application_url
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `job_applications_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const filtered = filter === 'all' ? jobs : jobs.filter(j => j.status === filter);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-charcoal-50 mb-2">Application Tracker</h1>
-      <p className="text-gray-600 dark:text-charcoal-400 mb-8">Track your job applications</p>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-charcoal-50">Application Tracker</h1>
+          <p className="text-gray-600 dark:text-charcoal-400">Track your job applications</p>
+        </div>
+        <button
+          onClick={exportToCSV}
+          className="bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 text-sm font-medium transition-colors"
+        >
+          📊 Export to CSV
+        </button>
+      </div>
+      <div className="mb-8"></div>
 
       <div className="grid grid-cols-5 gap-4 mb-6">
         {[

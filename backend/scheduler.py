@@ -7,10 +7,14 @@ from backend.services.groq_ai import GroqAI
 from backend.services.job_search import JobSearch
 from backend.config import get_settings
 from datetime import datetime
+import asyncio
+import logging
 
 settings = get_settings()
 engine = create_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
+
+logger = logging.getLogger("jobmatcher")
 
 groq_ai = GroqAI()
 job_search = JobSearch()
@@ -26,11 +30,11 @@ async def scan_jobs_for_user(user_id: int, resume_id: int, location: str = "Remo
         if not resume or not resume.analysis:
             return
 
-        queries = groq_ai.search_jobs_query(resume.analysis, location)
+        queries = await groq_ai.search_jobs_query(resume.analysis, location)
         raw_jobs = await job_search.search_multiple_queries(queries, location)
 
         for raw_job in raw_jobs[:10]:
-            match_data = groq_ai.match_job_to_resume(raw_job.get("description", ""), resume.analysis)
+            match_data = await groq_ai.match_job_to_resume(raw_job.get("description", ""), resume.analysis)
             if match_data and match_data.get("match_score", 0) >= 70:
                 existing = db.query(Job).filter(
                     Job.user_id == user_id,
@@ -54,11 +58,11 @@ async def scan_jobs_for_user(user_id: int, resume_id: int, location: str = "Remo
                         status=JobStatus.NEW,
                     )
                     db.add(new_job)
-                    print(f"Found new job: {raw_job.get('title')} at {raw_job.get('company')}")
+                    logger.info("Found new job: %s at %s", raw_job.get("title"), raw_job.get("company"))
 
         db.commit()
     except Exception as e:
-        print(f"Error in scheduled scan: {e}")
+        logger.error("Error in scheduled scan: %s", e)
     finally:
         db.close()
 
@@ -66,7 +70,7 @@ async def scan_jobs_for_user(user_id: int, resume_id: int, location: str = "Remo
 def start_scheduler():
     """Start the background job scheduler."""
     scheduler.start()
-    print("Background job scheduler started")
+    logger.info("Background job scheduler started")
 
 
 def stop_scheduler():

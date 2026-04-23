@@ -1,0 +1,14 @@
+node_modules/
+.venv/
+backend/venv/
+__pycache__/
+*.pyc
+.git/
+dist/
+*.pdf
+.env
+.env.local
+.DS_Store
+*.log
+coverage/
+.nyc_output/

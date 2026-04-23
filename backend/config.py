@@ -1,5 +1,11 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
+import os
+
+
+# Get the directory where this config.py file is located
+BACKEND_DIR = Path(__file__).parent.absolute()
 
 
 class Settings(BaseSettings):
@@ -13,7 +19,7 @@ class Settings(BaseSettings):
     MAX_RESULTS_LIMIT: int = 50
 
     class Config:
-        env_file = ".env"
+        env_file = os.path.join(BACKEND_DIR, ".env")
 
 
 @lru_cache()

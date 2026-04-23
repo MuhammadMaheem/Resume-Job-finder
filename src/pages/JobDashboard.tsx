@@ -5,7 +5,8 @@ interface Job {
   id: number; title: string; company: string; location: string;
   job_type: string; match_score: number; match_reasons: string[];
   missing_skills: string[]; application_url: string; source: string; status: string;
-  ease_of_apply: number; selected_for_bulk: boolean;
+  ease_of_apply: number; selected_for_bulk: boolean; description?: string;
+  posted_date?: string;
 }
 interface Resume { id: number; filename: string; }
 
@@ -13,10 +14,16 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [selectedResume, setSelectedResume] = useState<number | null>(null);
   const [location, setLocation] = useState('Remote');
+  const [locationType, setLocationType] = useState('any'); // remote, onsite, hybrid, any
+  const [country, setCountry] = useState('');
+  const [city, setCity] = useState('');
+  const [worldwide, setWorldwide] = useState(false);
+  const [hoursSincePosted, setHoursSincePosted] = useState(24); // Default: last 24 hours
   const [jobs, setJobs] = useState<Job[]>([]);
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedJob, setExpandedJob] = useState<number | null>(null);
+  const [viewingDescription, setViewingDescription] = useState<number | null>(null);
   const [minMatch, setMinMatch] = useState(0);
   const [jobType, setJobType] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
@@ -50,7 +57,16 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
     if (!selectedResume) return;
     setScanning(true);
     try {
-      const { data } = await axios.post('/api/jobs/scan', { resume_id: selectedResume, location, max_results: 15 });
+      const { data } = await axios.post('/api/jobs/scan', {
+        resume_id: selectedResume,
+        location,
+        location_type: locationType,
+        country: country || undefined,
+        city: city || undefined,
+        worldwide,
+        hours_since_posted: hoursSincePosted,
+        max_results: 50
+      });
       setJobs(data.sort((a: Job, b: Job) => (b.match_score || 0) - (a.match_score || 0)));
     } catch (err) { console.error(err); }
     finally { setScanning(false); }
@@ -79,6 +95,25 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
     navigator.clipboard.writeText(`${job.title} at ${job.company}\n${job.location || 'Remote'} | ${job.job_type}\n${job.match_score}% match\n${job.application_url}`);
   };
 
+  const formatPostedDate = (dateStr?: string) => {
+    if (!dateStr) return 'Date unknown';
+    try {
+      const date = new Date(dateStr);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffDays = Math.floor(diffHours / 24);
+      
+      if (diffHours < 1) return 'Posted just now';
+      if (diffHours < 24) return `Posted ${diffHours}h ago`;
+      if (diffDays === 1) return 'Posted 1 day ago';
+      if (diffDays < 7) return `Posted ${diffDays} days ago`;
+      return `Posted ${date.toLocaleDateString()}`;
+    } catch {
+      return 'Date unknown';
+    }
+  };
+
   const mc = (s: number) => s >= 80 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300' : s >= 60 ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300' : 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300';
 
   return (
@@ -87,17 +122,102 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
       <p className="text-gray-600 dark:text-charcoal-400 mb-8">AI-powered job search based on your resume</p>
 
       <div className="bg-white dark:bg-charcoal-900 rounded-lg shadow p-5 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <select value={selectedResume || ''} onChange={e => { const v = parseInt(e.target.value, 10); setSelectedResume(isNaN(v) ? null : v); }} className="border border-gray-300 dark:border-charcoal-600 bg-white dark:bg-charcoal-800 text-gray-900 dark:text-charcoal-100 rounded-md px-3 py-2.5 text-sm">
             <option value="">Select resume...</option>
             {resumes.map(r => <option key={r.id} value={r.id}>{r.filename}</option>)}
           </select>
-          <input type="text" value={location} onChange={e => setLocation(e.target.value)} className="border border-gray-300 dark:border-charcoal-600 bg-white dark:bg-charcoal-800 text-gray-900 dark:text-charcoal-100 rounded-md px-3 py-2.5 text-sm" placeholder="Remote, Dubai..." />
-          <div className="flex gap-2">
-            <button onClick={() => setShowFilters(!showFilters)} className="px-3 py-2.5 border border-gray-300 dark:border-charcoal-600 text-gray-700 dark:text-charcoal-300 rounded-md text-sm hover:bg-gray-50 dark:hover:bg-charcoal-800">Filters</button>
-            <button onClick={handleScan} disabled={!selectedResume || scanning} className="flex-1 bg-primary-600 text-white px-4 py-2.5 rounded-md hover:bg-primary-700 disabled:opacity-50 text-sm font-medium">{scanning ? '🔍 Searching...' : '🔍 Search Jobs'}</button>
+          <button onClick={handleScan} disabled={!selectedResume || scanning} className="bg-primary-600 text-white px-4 py-2.5 rounded-md hover:bg-primary-700 disabled:opacity-50 text-sm font-medium">{scanning ? '🔍 Searching...' : '🔍 Search Jobs'}</button>
+        </div>
+
+        {/* Location Type Selector */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 dark:text-charcoal-300 mb-2">Job Type</label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { value: 'any', label: 'Any', icon: '🌐' },
+              { value: 'remote', label: 'Remote', icon: '🏠' },
+              { value: 'onsite', label: 'On-site', icon: '🏢' },
+              { value: 'hybrid', label: 'Hybrid', icon: '🔄' },
+            ].map(type => (
+              <button
+                key={type.value}
+                onClick={() => setLocationType(type.value)}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  locationType === type.value
+                    ? 'bg-primary-600 text-white'
+                    : 'bg-gray-100 dark:bg-charcoal-800 text-gray-700 dark:text-charcoal-300 hover:bg-gray-200 dark:hover:bg-charcoal-700'
+                }`}
+              >
+                {type.icon} {type.label}
+              </button>
+            ))}
           </div>
         </div>
+
+        {/* Location Inputs */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-charcoal-400 mb-1">Country (Optional)</label>
+            <input
+              type="text"
+              value={country}
+              onChange={e => setCountry(e.target.value)}
+              className="w-full border border-gray-300 dark:border-charcoal-600 bg-white dark:bg-charcoal-800 text-gray-900 dark:text-charcoal-100 rounded-md px-3 py-2 text-sm"
+              placeholder="e.g. USA, UAE, Germany"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-charcoal-400 mb-1">City (Optional)</label>
+            <input
+              type="text"
+              value={city}
+              onChange={e => setCity(e.target.value)}
+              className="w-full border border-gray-300 dark:border-charcoal-600 bg-white dark:bg-charcoal-800 text-gray-900 dark:text-charcoal-100 rounded-md px-3 py-2 text-sm"
+              placeholder="e.g. Dubai, New York"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-charcoal-400 mb-1">Worldwide Search</label>
+            <div className="flex items-center h-9">
+              <input
+                type="checkbox"
+                checked={worldwide}
+                onChange={e => setWorldwide(e.target.checked)}
+                className="w-4 h-4 text-primary-600 border-gray-300 rounded"
+              />
+              <span className="ml-2 text-sm text-gray-700 dark:text-charcoal-300">Search globally</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Time Filter */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 dark:text-charcoal-300 mb-2">Job Posting Date</label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { value: 24, label: 'Last 24 Hours' },
+              { value: 72, label: 'Last 3 Days' },
+              { value: 168, label: 'Last 7 Days' },
+            ].map(time => (
+              <button
+                key={time.value}
+                onClick={() => setHoursSincePosted(time.value)}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  hoursSincePosted === time.value
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-gray-100 dark:bg-charcoal-800 text-gray-700 dark:text-charcoal-300 hover:bg-gray-200 dark:hover:bg-charcoal-700'
+                }`}
+              >
+                {time.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button onClick={() => setShowFilters(!showFilters)} className="w-full px-3 py-2 border border-gray-300 dark:border-charcoal-600 text-gray-700 dark:text-charcoal-300 rounded-md text-sm hover:bg-gray-50 dark:hover:bg-charcoal-800">
+          {showFilters ? 'Hide' : 'Show'} Additional Filters
+        </button>
         {showFilters && (
           <div className="mt-4 pt-4 border-t border-gray-200 dark:border-charcoal-700 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
@@ -165,7 +285,7 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
                     <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-charcoal-400">
                       <span>📍 {job.location || 'Remote'}</span>
                       {job.job_type && <span>💼 {job.job_type}</span>}
-                      <span>🔗 {job.source}</span>
+                      <span>🕒 {formatPostedDate(job.posted_date)}</span>
                     </div>
                   </div>
                 </div>
@@ -185,6 +305,23 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
                   {job.missing_skills?.length > 0 && (
                     <div><h4 className="text-sm font-medium text-gray-700 dark:text-charcoal-300 mb-2">⚠️ Missing Skills</h4>
                       <div className="flex flex-wrap gap-2">{job.missing_skills.map((s, idx) => <span key={idx} className="px-2 py-1 bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 rounded text-xs font-medium">{s}</span>)}</div>
+                    </div>
+                  )}
+                  {job.description && (
+                    <div>
+                      <button
+                        onClick={() => setViewingDescription(viewingDescription === job.id ? null : job.id)}
+                        className="text-sm text-primary-600 dark:text-primary-400 hover:underline font-medium mb-2"
+                      >
+                        {viewingDescription === job.id ? 'Hide Full Description' : 'View Full Description'}
+                      </button>
+                      {viewingDescription === job.id && (
+                        <div className="mt-2 p-4 bg-gray-50 dark:bg-charcoal-800 rounded-md max-h-96 overflow-y-auto">
+                          <pre className="whitespace-pre-wrap text-sm text-gray-700 dark:text-charcoal-300 font-sans">
+                            {job.description}
+                          </pre>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="flex gap-2">

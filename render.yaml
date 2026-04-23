@@ -20,7 +20,7 @@ services:
           name: resume-db
           property: connectionString
       - key: CORS_ORIGINS
-        value: ""
+        value: "http://localhost:3000,http://localhost:5173"  # Will be overridden by environment variable in production
       - key: DEBUG
         value: "false"
     autoDeploy: true
