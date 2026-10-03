@@ -93,6 +93,7 @@ class Job(Base):
     created_at = Column(DateTime, default=utcnow, index=True)
     applied_at = Column(DateTime, nullable=True)
     selected_for_bulk = Column(Boolean, default=False, index=True)
+    is_demo = Column(Boolean, default=False, index=True)
 
     user = relationship("User", back_populates="jobs")
     cover_letters = relationship("CoverLetter", back_populates="job", cascade="all, delete-orphan")

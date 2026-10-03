@@ -60,23 +60,36 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 # CORS middleware - restricted in production
-# Support multiple origins including Render's dynamic URLs
-allowed_origins = settings.CORS_ORIGINS.split(",") if settings.CORS_ORIGINS else ["http://localhost:3000"]
+# FastAPI CORS middleware doesn't support wildcard subdomains in allow_origins.
+# We use allow_origin_regex for wildcard patterns and allow_origins for exact matches.
+allowed_origins = []
+allowed_origin_regex = None
 
-# Add Render's wildcard pattern if not in development
-if settings.CORS_ORIGINS and "onrender.com" not in settings.CORS_ORIGINS:
-    # For production, allow Render subdomains (*.onrender.com)
-    allowed_origins.extend([
-        "https://*.onrender.com",
-        "http://*.onrender.com",
-    ])
+if settings.CORS_ORIGINS:
+    origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+    regex_parts = []
+    
+    for origin in origins:
+        if origin.startswith("*.") or "*" in origin:
+            # Convert wildcard pattern to regex
+            # e.g., "https://*.onrender.com" -> "https://[a-z0-9-]+\.onrender\.com"
+            pattern = origin.replace(".", r"\.").replace("*", "[a-z0-9-]+")
+            regex_parts.append(pattern)
+        else:
+            allowed_origins.append(origin)
+    
+    if regex_parts:
+        allowed_origin_regex = "^(" + "|".join(regex_parts) + ")$"
+else:
+    allowed_origins = ["http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # Explicit methods
-    allow_headers=["Content-Type", "Authorization", "Accept"],  # Explicit headers
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
     expose_headers=["Content-Type"],
 )
 

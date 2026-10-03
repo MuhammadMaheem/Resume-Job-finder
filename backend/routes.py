@@ -25,6 +25,7 @@ from backend.models import (
     InterviewQuestion, NetworkingSuggestion
 )
 from backend.schemas import *
+from backend.auth import create_access_token, get_current_user
 from backend.services.resume_parser import ResumeParser
 from backend.services.groq_ai import GroqAI
 from backend.services.job_search import JobSearch
@@ -44,21 +45,25 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ========== USER ENDPOINTS ==========
 
-@router.post("/users", response_model=UserResponse)
+@router.post("/users", response_model=TokenResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = User(name=user.name, email=user.email, notification_email=user.notification_email, notification_enabled=user.notification_enabled)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    return db_user
+    access_token = create_access_token(db_user.id)
+    return {"access_token": access_token, "token_type": "bearer", "user": db_user}
 
+
+@router.get("/users/me", response_model=UserResponse)
+def get_current_user_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return current_user
 
 @router.get("/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+def get_user(user_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return current_user
 
 
 @router.patch("/users/{user_id}/notifications", response_model=UserResponse)
@@ -77,17 +82,13 @@ def update_notifications(user_id: int, settings: NotificationSettings, db: Sessi
 
 # ========== RESUME ENDPOINTS ==========
 
-@router.post("/resumes/{user_id}/upload", response_model=ResumeResponse)
+@router.post("/resumes/upload", response_model=ResumeResponse)
 @limiter.limit("5/minute")
-async def upload_resume(request: Request, user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_resume(request: Request, file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user_id = current_user.id
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        # Handle stale client-side user IDs by creating a lightweight placeholder user.
-        user = User(id=user_id, name=f"User {user_id}")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        logger.warning("Auto-created missing user %s during resume upload", user_id)
+        raise HTTPException(status_code=404, detail="User not found. Please refresh the page to create a new user.")
 
     # Validate file type
     if not file.filename or not file.filename.lower().endswith('.pdf'):
@@ -175,20 +176,20 @@ def get_user_resumes(user_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/resumes/{resume_id}/download")
-def download_resume(resume_id: int, db: Session = Depends(get_db)):
-    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+def download_resume(resume_id: int, user_id: int = Query(...), db: Session = Depends(get_db)):
+    resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user_id).first()
     if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="Resume not found or access denied")
     if not os.path.exists(resume.file_path):
         raise HTTPException(status_code=404, detail="Resume file not found")
     return FileResponse(resume.file_path, media_type="application/pdf", filename=resume.filename)
 
 
 @router.delete("/resumes/{resume_id}")
-def delete_resume(resume_id: int, db: Session = Depends(get_db)):
-    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+def delete_resume(resume_id: int, user_id: int = Query(...), db: Session = Depends(get_db)):
+    resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user_id).first()
     if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="Resume not found or access denied")
     # Delete file (ignore errors)
     try:
         if os.path.exists(resume.file_path):
@@ -229,7 +230,13 @@ def compare_resumes(user_id: int, db: Session = Depends(get_db)):
 
 @router.post("/jobs/scan", response_model=List[JobResponse])
 @limiter.limit("10/minute")
-async def scan_for_jobs(request: Request, request_data: JobScanRequest, db: Session = Depends(get_db)):
+async def scan_for_jobs(request: Request, request_data: JobScanRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Ensure the resume belongs to the current user
+    if request_data.resume_id:
+        resume = db.query(Resume).filter(Resume.id == request_data.resume_id, Resume.user_id == current_user.id).first()
+        if not resume:
+            raise HTTPException(status_code=404, detail="Resume not found or access denied")
+        request_data.resume_id = resume.id
     resume = db.query(Resume).filter(Resume.id == request_data.resume_id).first()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -249,13 +256,14 @@ async def scan_for_jobs(request: Request, request_data: JobScanRequest, db: Sess
 
     queries = await groq_ai.search_jobs_query(resume.analysis, search_location)
     raw_jobs = await job_search.search_multiple_queries(
-        queries,
-        location=search_location,
-        hours_since_posted=request_data.hours_since_posted or 24,
-        location_type=request_data.location_type or "any",
-        country=request_data.country,
-        city=request_data.city,
-        worldwide=request_data.worldwide or False
+    queries,
+    location=search_location,
+    hours_since_posted=request_data.hours_since_posted or 24,
+    location_type=request_data.location_type or "any",
+    country=request_data.country,
+    city=request_data.city,
+    worldwide=request_data.worldwide or False,
+    jobs_per_query=max(30, (request_data.max_results or 50) // 3 + 5),
     )
 
     matched_jobs = []
@@ -298,6 +306,7 @@ async def scan_for_jobs(request: Request, request_data: JobScanRequest, db: Sess
             application_url=raw_job.get("application_url", ""),
             source=raw_job.get("source", ""), status=JobStatus.NEW,
             ease_of_apply=ease,
+            is_demo=raw_job.get("is_demo", False),
         )
         db.add(db_job)
         matched_jobs.append(db_job)
@@ -317,7 +326,7 @@ async def scan_for_jobs(request: Request, request_data: JobScanRequest, db: Sess
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
-def get_job(job_id: int, db: Session = Depends(get_db)):
+def get_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -325,7 +334,7 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/users/{user_id}/jobs", response_model=List[JobResponse])
-def get_user_jobs(user_id: int, skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200), min_match: Opt[int] = None, job_type: Opt[str] = None, company: Opt[str] = None, db: Session = Depends(get_db)):
+def get_user_jobs(user_id: int, current_user: User = Depends(get_current_user), skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200), min_match: Opt[int] = None, job_type: Opt[str] = None, company: Opt[str] = None, db: Session = Depends(get_db)):
     query = db.query(Job).filter(Job.user_id == user_id)
     if min_match:
         query = query.filter(Job.match_score >= min_match)
@@ -337,7 +346,7 @@ def get_user_jobs(user_id: int, skip: int = Query(0, ge=0), limit: int = Query(5
 
 
 @router.get("/users/{user_id}/jobs/top", response_model=List[JobResponse])
-def get_top_jobs(user_id: int, limit: int = 10, db: Session = Depends(get_db)):
+def get_top_jobs(user_id: int, current_user: User = Depends(get_current_user), limit: int = 10, db: Session = Depends(get_db)):
     return db.query(Job).filter(Job.user_id == user_id, Job.match_score.isnot(None)).order_by(Job.match_score.desc()).limit(limit).all()
 
 
@@ -348,10 +357,10 @@ def get_easy_apply_jobs(user_id: int, limit: int = 10, db: Session = Depends(get
 
 
 @router.patch("/jobs/{job_id}/status", response_model=JobResponse)
-def update_job_status(job_id: int, status_update: JobStatusUpdate, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+def update_job_status(job_id: int, status_update: JobStatusUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Job not found or access denied")
     try:
         job.status = JobStatus(status_update.status)
     except ValueError:

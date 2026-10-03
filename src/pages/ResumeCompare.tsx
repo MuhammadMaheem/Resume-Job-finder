@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Resume { id: number; filename: string; analysis: any; }
 
@@ -10,7 +11,7 @@ export default function ResumeCompare({ userId }: { userId: number | null }) {
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}/resumes/compare`).catch(() => ({ data: { resumes: [], comparison: null } }))
+    api.get(`/api/users/${userId}/resumes/compare`).catch(() => ({ data: { resumes: [], comparison: null } }))
       .then(res => { setResumes(res.data.resumes || []); setComparison(res.data.comparison); setLoading(false); });
   }, [userId]);
 

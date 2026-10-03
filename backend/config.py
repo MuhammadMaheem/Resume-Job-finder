@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     CORS_ORIGINS: str = "http://localhost:3000"
     MAX_RESULTS_LIMIT: int = 50
+    JWT_SECRET: str = "your-secret-key-change-in-production"
 
     class Config:
         env_file = os.path.join(BACKEND_DIR, ".env")

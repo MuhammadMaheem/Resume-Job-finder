@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Job { id: number; title: string; company: string; }
 
@@ -11,14 +12,14 @@ export default function CoverLetterGenerator({ userId }: { userId: number | null
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] }))
+    api.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] }))
       .then(res => setJobs(res.data || []));
   }, [userId]);
 
   const handleGenerate = async () => {
     if (!selected) return;
     setGenerating(true); setLetter(null);
-    try { const { data } = await axios.post('/api/cover-letters/generate', { job_id: selected }); setLetter(data.content); }
+    try { const { data } = await api.post('/api/cover-letters/generate', { job_id: selected }); setLetter(data.content); }
     catch (err) { console.error(err); }
     finally { setGenerating(false); }
   };

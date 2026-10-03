@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 export default function Settings({ userId }: { userId: number | null }) {
   const [user, setUser] = useState<any>(null);
@@ -11,7 +12,7 @@ export default function Settings({ userId }: { userId: number | null }) {
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}`).catch(() => ({ data: null }))
+    api.get(`/api/users/${userId}`).catch(() => ({ data: null }))
       .then(res => {
         if (res.data) {
           setUser(res.data);
@@ -24,7 +25,7 @@ export default function Settings({ userId }: { userId: number | null }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await axios.patch(`/api/users/${userId}/notifications`, {
+      await api.patch(`/api/users/${userId}/notifications`, {
         notification_email: email,
         notification_enabled: enabled,
       });

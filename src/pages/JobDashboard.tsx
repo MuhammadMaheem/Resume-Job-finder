@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Job {
   id: number; title: string; company: string; location: string;
   job_type: string; match_score: number; match_reasons: string[];
   missing_skills: string[]; application_url: string; source: string; status: string;
-  ease_of_apply: number; selected_for_bulk: boolean; description?: string;
+  ease_of_apply: number; selected_for_bulk: boolean; is_demo?: boolean; description?: string;
   posted_date?: string;
 }
 interface Resume { id: number; filename: string; }
@@ -33,8 +34,8 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
   useEffect(() => {
     if (!userId) return;
     Promise.all([
-      axios.get(`/api/users/${userId}/resumes`).catch(() => ({ data: [] })),
-      axios.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] })),
+      api.get(`/api/users/${userId}/resumes`).catch(() => ({ data: [] })),
+      api.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] })),
     ]).then(([r, j]) => {
       setResumes(r.data || []);
       setJobs((j.data || []).sort((a: Job, b: Job) => (b.match_score || 0) - (a.match_score || 0)));
@@ -49,7 +50,7 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
     if (minMatch > 0) params.min_match = minMatch;
     if (jobType) params.job_type = jobType;
     if (companyFilter) params.company = companyFilter;
-    axios.get(`/api/users/${userId}/jobs`, { params }).catch(() => ({ data: [] }))
+    api.get(`/api/users/${userId}/jobs`, { params }).catch(() => ({ data: [] }))
       .then(res => setJobs((res.data || []).sort((a: Job, b: Job) => (b.match_score || 0) - (a.match_score || 0))));
   }, [minMatch, jobType, companyFilter, userId]);
 
@@ -57,7 +58,7 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
     if (!selectedResume) return;
     setScanning(true);
     try {
-      const { data } = await axios.post('/api/jobs/scan', {
+      const { data } = await api.post('/api/jobs/scan', {
         resume_id: selectedResume,
         location,
         location_type: locationType,
@@ -73,7 +74,7 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
   };
 
   const handleStatus = async (id: number, status: string) => {
-    await axios.patch(`/api/jobs/${id}/status`, { status });
+    await api.patch(`/api/jobs/${id}/status`, { status });
     setJobs(jobs.map(j => j.id === id ? { ...j, status } : j));
   };
 
@@ -81,13 +82,13 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
     if (!bulkStatus) return;
     const ids = jobs.filter(j => j.selected_for_bulk).map(j => j.id);
     if (ids.length === 0) return;
-    await axios.post('/api/jobs/bulk-status', { status: bulkStatus, job_ids: ids });
+    await api.post('/api/jobs/bulk-status', { status: bulkStatus, job_ids: ids });
     setJobs(jobs.map(j => j.selected_for_bulk ? { ...j, status: bulkStatus, selected_for_bulk: false } : j));
     setBulkStatus('');
   };
 
   const toggleBulk = async (id: number) => {
-    await axios.post(`/api/jobs/${id}/select-bulk`);
+    await api.post(`/api/jobs/${id}/select-bulk`);
     setJobs(jobs.map(j => j.id === id ? { ...j, selected_for_bulk: !j.selected_for_bulk } : j));
   };
 
@@ -120,6 +121,16 @@ export default function JobDashboard({ userId }: { userId: number | null }) {
     <div className="max-w-7xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-charcoal-50 mb-2">Find Matching Jobs</h1>
       <p className="text-gray-600 dark:text-charcoal-400 mb-8">AI-powered job search based on your resume</p>
+      
+      {jobs.some(j => j.is_demo || j.source === "Demo Jobs") && (
+        <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg p-4 mb-6 flex items-start gap-3">
+          <span className="text-xl">⚠️</span>
+          <div>
+            <p className="font-medium">Demo Mode Active</p>
+            <p className="text-sm mt-1">These are sample job listings. Add a SerpAPI key to search real jobs from Google Jobs.</p>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white dark:bg-charcoal-900 rounded-lg shadow p-5 mb-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">

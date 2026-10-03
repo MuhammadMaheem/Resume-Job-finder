@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Resume { id: number; filename: string; }
 interface Imp { missing_keywords: string[]; skill_gaps: string[]; suggestions: string[]; recommended_certifications: string[]; trending_skills: string[]; }
@@ -12,7 +13,7 @@ export default function ResumeImprovements({ userId }: { userId: number | null }
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}/resumes`).catch(() => ({ data: [] }))
+    api.get(`/api/users/${userId}/resumes`).catch(() => ({ data: [] }))
       .then(res => { setResumes(res.data || []); if (res.data?.length) setSelected(res.data[0].id); });
   }, [userId]);
 
@@ -20,7 +21,7 @@ export default function ResumeImprovements({ userId }: { userId: number | null }
     if (!selected) return;
     setLoading(true);
     try {
-      const { data } = await axios.post(`/api/resumes/${selected}/improvements`, null, { params: { target_titles: JSON.stringify(['Python Developer', 'AI Engineer', 'ML Engineer']) } });
+      const { data } = await api.post(`/api/resumes/${selected}/improvements`, null, { params: { target_titles: JSON.stringify(['Python Developer', 'AI Engineer', 'ML Engineer']) } });
       setImp(data);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }

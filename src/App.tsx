@@ -156,19 +156,22 @@ export default function App() {
 
   useEffect(() => {
     const stored = localStorage.getItem('userId');
-    if (stored) {
-      const storedId = parseInt(stored);
-      // Validate that the stored user actually exists in the database
-      fetch(`/api/users/${storedId}`)
+    const storedToken = localStorage.getItem('token');
+    
+    if (stored && storedToken) {
+      // We have both userId and token, validate by making an authenticated request
+      fetch(`/api/users/${stored}`, {
+        headers: { 'Authorization': `Bearer ${storedToken}` }
+      })
         .then(res => {
           if (res.ok) {
-            // User exists, use it
-            setUserId(storedId);
+            setUserId(parseInt(stored));
             setUserReady(true);
           } else {
-            // User doesn't exist (404), create a new one
-            console.warn(`Stored user ${storedId} not found, creating new user...`);
+            // Token invalid, create new user
+            console.warn('Stored token invalid, creating new user...');
             localStorage.removeItem('userId');
+            localStorage.removeItem('token');
             return fetch('/api/users', { 
               method: 'POST', 
               headers: { 'Content-Type': 'application/json' }, 
@@ -178,9 +181,14 @@ export default function App() {
         })
         .then(res => res?.json())
         .then(data => {
-          if (data?.id) {
+          if (data?.access_token) {
+            setUserId(data.user.id);
+            localStorage.setItem('userId', data.user.id.toString());
+            localStorage.setItem('token', data.access_token);
+          } else if (data?.id) {
+            // Fallback: if no token, just use the id
             setUserId(data.id);
-            localStorage.setItem('userId', data.id);
+            localStorage.setItem('userId', data.id.toString());
           }
           setUserReady(true);
         })
@@ -188,6 +196,27 @@ export default function App() {
           console.error('Failed to initialize user:', err);
           setUserReady(true);
         });
+    } else if (stored) {
+      // Has userId but no token, create new user
+      localStorage.removeItem('userId');
+      fetch('/api/users', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ name: 'User' }) 
+      })
+        .then(res => res.json())
+        .then(data => { 
+          if (data?.access_token) {
+            setUserId(data.user.id);
+            localStorage.setItem('userId', data.user.id.toString());
+            localStorage.setItem('token', data.access_token);
+          } else if (data?.id) {
+            setUserId(data.id);
+            localStorage.setItem('userId', data.id.toString());
+          }
+          setUserReady(true); 
+        })
+        .catch(() => setUserReady(true));
     } else {
       // No stored user, create a new one
       fetch('/api/users', { 
@@ -197,13 +226,20 @@ export default function App() {
       })
         .then(res => res.json())
         .then(data => { 
-          setUserId(data.id); 
-          localStorage.setItem('userId', data.id); 
+          if (data?.access_token) {
+            setUserId(data.user.id);
+            localStorage.setItem('userId', data.user.id.toString());
+            localStorage.setItem('token', data.access_token);
+          } else if (data?.id) {
+            setUserId(data.id);
+            localStorage.setItem('userId', data.id.toString());
+          }
           setUserReady(true); 
         })
         .catch(() => setUserReady(true));
     }
   }, []);
+
 
   if (!userReady) return <div className="min-h-screen bg-gray-50 dark:bg-charcoal-950 flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div></div>;
 

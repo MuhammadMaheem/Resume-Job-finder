@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface ResumeUploadProps {
   userId: number | null;
@@ -59,7 +60,7 @@ export default function ResumeUpload({ userId }: ResumeUploadProps) {
     const formData = new FormData();
     formData.append('file', selectedFile);
     try {
-      const { data } = await axios.post(`/api/resumes/${userId}/upload`, formData);
+      const { data } = await api.post(`/api/resumes/upload`, formData);
       setResumeId(data.id);
       setAnalysis(data.analysis);
     } catch (err: any) {
@@ -98,7 +99,7 @@ export default function ResumeUpload({ userId }: ResumeUploadProps) {
         portfolio_url: '',
         other_notes: otherNotes,
       };
-      const { data } = await axios.put(`/api/resumes/${resumeId}/profile`, profile);
+      const { data } = await api.put(`/api/resumes/${resumeId}/profile`, profile);
       setAnalysis(data.analysis);
       setShowManualProfile(false);
     } catch (err: any) {

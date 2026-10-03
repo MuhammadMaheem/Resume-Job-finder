@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Job {
   id: number;
@@ -25,8 +26,8 @@ export default function HomePage({ userId }: HomePageProps) {
     if (!userId) { setLoading(false); return; }
 
     Promise.all([
-      axios.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] })),
-      axios.get(`/api/users/${userId}/resumes`).catch(() => ({ data: [] })),
+      api.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] })),
+      api.get(`/api/users/${userId}/resumes`).catch(() => ({ data: [] })),
     ]).then(([jobsRes, resumesRes]) => {
       const jobs = (jobsRes.data || []).sort((a: Job, b: Job) => (b.match_score || 0) - (a.match_score || 0)).slice(0, 5);
       setTopJobs(jobs);

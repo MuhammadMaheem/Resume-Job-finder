@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Job { id: number; title: string; company: string; description: string; }
 interface Question { id: number; category: string; question: string; suggested_answer: string; }
@@ -13,13 +14,13 @@ export default function InterviewPrep({ userId }: { userId: number | null }) {
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] }))
+    api.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] }))
       .then(res => setJobs(res.data || []));
   }, [userId]);
 
   useEffect(() => {
     if (selected) {
-      axios.get(`/api/jobs/${selected}/interview-questions`).catch(() => ({ data: [] }))
+      api.get(`/api/jobs/${selected}/interview-questions`).catch(() => ({ data: [] }))
         .then(res => { setQuestions(res.data || []); setShowAnswer({}); });
     }
   }, [selected]);
@@ -28,7 +29,7 @@ export default function InterviewPrep({ userId }: { userId: number | null }) {
     if (!selected) return;
     setLoading(true);
     try {
-      const { data } = await axios.post('/api/interview-questions/generate', { job_id: selected });
+      const { data } = await api.post('/api/interview-questions/generate', { job_id: selected });
       setQuestions(data);
       setShowAnswer({});
     } catch (err) { console.error(err); }

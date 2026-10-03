@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 interface Job { id: number; title: string; company: string; location: string; match_score: number; application_url: string; status: string; created_at: string; }
 
@@ -10,12 +11,12 @@ export default function ApplicationTracker({ userId }: { userId: number | null }
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] }))
+    api.get(`/api/users/${userId}/jobs`).catch(() => ({ data: [] }))
       .then(res => { setJobs(res.data || []); setLoading(false); });
   }, [userId]);
 
   const handleStatus = async (jobId: number, status: string) => {
-    await axios.patch(`/api/jobs/${jobId}/status`, { status });
+    await api.patch(`/api/jobs/${jobId}/status`, { status });
     setJobs(jobs.map(j => j.id === jobId ? { ...j, status } : j));
   };
 

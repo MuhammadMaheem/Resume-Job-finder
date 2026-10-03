@@ -52,10 +52,10 @@ class JobSearch:
             "Worldwide": None,  # No country restriction
         }
 
-    async def search_jobs_serpapi(self, query: str, location: str = "Remote", num_results: int = 10, 
+    async def search_jobs_serpapi(self, query: str, location: str = "Remote", num_results: int = 30,
                                    hours_since_posted: int = 24, location_type: str = "any",
                                    country: str = None, city: str = None, worldwide: bool = False) -> list[dict]:
-        """Search for jobs using SerpAPI (Google Jobs) with enhanced location and time filtering."""
+        """Search for jobs using SerpAPI (Google Jobs) with pagination support."""
         if not self.serpapi_key:
             return await self.search_jobs_demo(query, location, num_results, hours_since_posted, location_type)
 
@@ -79,79 +79,97 @@ class JobSearch:
         elif location_type == "hybrid":
             job_type_filter = "Hybrid"
 
-        params = {
-            "engine": "google_jobs",
-            "q": query,
-            "l": search_location,
-            "hl": "en",
-            "gl": "us",  # Default to US
-            "api_key": self.serpapi_key,
-            "num": min(num_results, 20),  # SerpAPI max is 20 per request
-        }
-
-        # Set country code based on location
+        # Determine country code
+        country_code = "us"
         if worldwide:
-            params["gl"] = "us"  # Default for worldwide
+            country_code = "us"
         elif country:
-            # Try to find country code from mapping
-            country_code = self.country_codes.get(country)
-            if country_code:
-                params["gl"] = country_code
-            # If country not in mapping, keep default "us"
+            country_code = self.country_codes.get(country, "us")
         elif city:
-            # Try to infer country from city
             city_code = self.country_codes.get(city)
             if city_code:
-                params["gl"] = city_code
-        
-        # Add job type filter if specified
-        if job_type_filter:
-            params["jtype"] = job_type_filter
-        
-        # Add time filter (past day, past 3 days, etc.)
-        if hours_since_posted <= 24:
-            params["tbd"] = "d"  # Past day
-        elif hours_since_posted <= 72:
-            params["tbd"] = "3d"  # Past 3 days
-        elif hours_since_posted <= 168:
-            params["tbd"] = "w"  # Past week
+                country_code = city_code
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(self.base_url, params=params)
-                response.raise_for_status()
-                data = response.json()
+        # Pagination: SerpAPI returns max 20 per page, we may need multiple pages
+        all_jobs = []
+        start = 0
+        page_size = 20  # SerpAPI max per request for Google Jobs
 
-                jobs = []
-                for job in data.get("jobs_results", [])[:num_results]:
-                    # Get the best available link
-                    app_url = job.get("source_link", "") or job.get("share_link", "")
-                    if not app_url and job.get("job_links"):
-                        app_url = job["job_links"][0].get("link", "")
+        while len(all_jobs) < num_results:
+            params = {
+                "engine": "google_jobs",
+                "q": query,
+                "l": search_location,
+                "hl": "en",
+                "gl": country_code,
+                "api_key": self.serpapi_key,
+                "num": min(page_size, num_results - len(all_jobs)),
+                "start": start,
+            }
 
-                    # Parse posted date
-                    posted_date = job.get("detected_extensions", {}).get("posted_at", "")
-                    
-                    jobs.append({
-                        "title": job.get("title", ""),
-                        "company": job.get("company_name", job.get("via", "")),
-                        "location": job.get("location", ""),
-                        "job_type": job.get("detected_extensions", {}).get("schedule_type", "") or job_type_filter or "",
-                        "salary_min": None,
-                        "salary_max": None,
-                        "description": job.get("description", ""),
-                        "application_url": app_url,
-                        "source": job.get("via", "Google Jobs"),
-                        "posted_date": posted_date,
-                        "requirements": [],
-                    })
-                return jobs
-        except Exception as e:
-            logger.warning(f"SerpAPI search failed: {e}. Falling back to demo mode.")
-            return await self.search_jobs_demo(
-                query, location, num_results, hours_since_posted, location_type,
-                country=country, city=city, worldwide=worldwide
-            )
+            # Add job type filter if specified
+            if job_type_filter:
+                params["jtype"] = job_type_filter
+
+            # Add time filter
+            if hours_since_posted <= 24:
+                params["tbd"] = "d"
+            elif hours_since_posted <= 72:
+                params["tbd"] = "3d"
+            elif hours_since_posted <= 168:
+                params["tbd"] = "w"
+
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(self.base_url, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    jobs_page = data.get("jobs_results", [])
+                    if not jobs_page:
+                        break  # No more results
+
+                    for job in jobs_page:
+                        # Get the best available link
+                        app_url = job.get("source_link", "") or job.get("share_link", "")
+                        if not app_url and job.get("job_links"):
+                            app_url = job["job_links"][0].get("link", "")
+
+                        # Parse posted date
+                        posted_date = job.get("detected_extensions", {}).get("posted_at", "")
+
+                        all_jobs.append({
+                            "title": job.get("title", ""),
+                            "company": job.get("company_name", job.get("via", "")),
+                            "location": job.get("location", ""),
+                            "job_type": job.get("detected_extensions", {}).get("schedule_type", "") or job_type_filter or "",
+                            "salary_min": None,
+                            "salary_max": None,
+                            "description": job.get("description", ""),
+                            "application_url": app_url,
+                            "source": job.get("via", "Google Jobs"),
+                            "posted_date": posted_date,
+                            "requirements": [],
+                        })
+
+                    # If we got fewer results than requested on this page, no more pages
+                    if len(jobs_page) < page_size:
+                        break
+
+                    start += page_size
+
+                    # Safety: don't fetch more than 5 pages (100 results) per query
+                    if start >= 100:
+                        break
+
+            except Exception as e:
+                logger.warning(f"SerpAPI search failed: {e}. Falling back to demo mode.")
+                return await self.search_jobs_demo(
+                    query, location, num_results, hours_since_posted, location_type,
+                    country=country, city=city, worldwide=worldwide
+                )
+
+        return all_jobs[:num_results]
 
     async def search_jobs_demo(self, query: str, location: str = "Remote", num_results: int = 5,
                                 hours_since_posted: int = 24, location_type: str = "any",
@@ -262,9 +280,10 @@ class JobSearch:
         """Fallback manual search using direct job board scraping."""
         return await self.search_jobs_demo(query, location, num_results)
 
-    async def search_multiple_queries(self, queries: list[dict], location: str = "Remote", 
+    async def search_multiple_queries(self, queries: list[dict], location: str = "Remote",
                                        hours_since_posted: int = 24, location_type: str = "any",
-                                       country: str = None, city: str = None, worldwide: bool = False) -> list[dict]:
+                                       country: str = None, city: str = None, worldwide: bool = False,
+                                       jobs_per_query: int = 30) -> list[dict]:
         """Search for jobs using multiple generated queries and deduplicate results."""
         all_jobs = []
         seen_urls = set()
@@ -275,10 +294,11 @@ class JobSearch:
                 continue
 
             jobs = await self.search_jobs_serpapi(
-                query, location, 
+                query, location,
+                num_results=jobs_per_query,
                 hours_since_posted=hours_since_posted,
                 location_type=location_type,
-                country=country, 
+                country=country,
                 city=city,
                 worldwide=worldwide
             )

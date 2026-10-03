@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
+import axios from 'axios';  // Keep for backwards compatibility
 
 export default function Analytics({ userId }: { userId: number | null }) {
   const [data, setData] = useState<any>(null);
@@ -7,7 +8,7 @@ export default function Analytics({ userId }: { userId: number | null }) {
 
   useEffect(() => {
     if (!userId) return;
-    axios.get(`/api/users/${userId}/analytics`).catch(() => ({ data: null }))
+    api.get(`/api/users/${userId}/analytics`).catch(() => ({ data: null }))
       .then(res => { setData(res.data); setLoading(false); });
   }, [userId]);
 

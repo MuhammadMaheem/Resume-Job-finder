@@ -31,6 +31,12 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+
 # Resume schemas
 class ManualProfile(BaseModel):
     additional_skills: Optional[List[str]] = []
@@ -97,6 +103,7 @@ class JobResponse(BaseModel):
     created_at: datetime
     applied_at: Optional[datetime]
     selected_for_bulk: Optional[bool]
+    is_demo: Optional[bool] = False
 
     @field_validator('status', mode='before')
     @classmethod
@@ -121,13 +128,13 @@ class JobScanRequest(BaseModel):
     city: Optional[str] = None
     worldwide: Optional[bool] = False
     hours_since_posted: Optional[int] = 24  # Default: last 24 hours
-    max_results: Optional[int] = 20
+    max_results: Optional[int] = 50
 
     @field_validator('max_results')
     @classmethod
     def validate_max_results(cls, v):
-        if v is not None and (v < 1 or v > 100):
-            raise ValueError('max_results must be between 1 and 100')
+        if v is not None and (v < 1 or v > 200):
+            raise ValueError('max_results must be between 1 and 200')
         return v
 
     @field_validator('hours_since_posted')
